@@ -7,7 +7,8 @@ Hardware need
  Pico Display, 
  Photo resistor GL5528, 
  Resistor 10kHom.
- 
+
+ For enclosure, 3D step files are available : https://grabcad.com/library/light-exposure-meter-1
 ---
 
 ## Technical Overview
