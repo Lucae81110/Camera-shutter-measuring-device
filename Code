@@ -1,0 +1,341 @@
+import time
+from machine import Pin, ADC, I2C
+from picographics import PicoGraphics, DISPLAY_PICO_DISPLAY, PEN_P4
+from pimoroni import RGBLED
+import os
+
+# We're only using a few colours so we can use a 4 bit/16 colour palette and save RAM!
+display = PicoGraphics(display=DISPLAY_PICO_DISPLAY, pen_type=PEN_P4, rotate=0)
+
+# Nom du fichier pour sauvegarder la valeur du rétroéclairage
+BACKLIGHT_FILE = "backlight_value.txt"
+
+# Fonction pour charger la valeur du rétroéclairage depuis le fichier
+def charger_retro_eclairage():
+    try:
+        with open(BACKLIGHT_FILE, "r") as f:
+            return float(f.read())
+    except (OSError, ValueError):
+        return 0.5  # Valeur par défaut si le fichier n'existe pas ou est corrompu
+
+# Fonction pour sauvegarder la valeur du rétroéclairage dans le fichier
+def sauvegarder_retro_eclairage(valeur):
+    with open(BACKLIGHT_FILE, "w") as f:
+        f.write(str(valeur))
+
+# Charge la valeur initiale du rétroéclairage
+current_backlight = charger_retro_eclairage()
+display.set_backlight(current_backlight)
+display.set_font("bitmap8")
+
+button_a = Pin(12, Pin.IN, Pin.PULL_UP)
+button_b = Pin(13, Pin.IN, Pin.PULL_UP)
+button_x = Pin(14, Pin.IN, Pin.PULL_UP)
+button_y = Pin(15, Pin.IN, Pin.PULL_UP)
+
+# Set up the RGB LED For Display Pack and Display Pack 2.0":
+led = RGBLED(6, 7, 8)
+
+# For Display Pack 2.8" uncomment the line below and comment out the line above:
+# led = RGBLED(26, 27, 28)
+
+WHITE = display.create_pen(255, 255, 255)
+BLACK = display.create_pen(0, 0, 0)
+CYAN = display.create_pen(0, 255, 255)
+MAGENTA = display.create_pen(255, 0, 255)
+YELLOW = display.create_pen(255, 255, 0)
+GREEN = display.create_pen(0, 255, 0)
+
+# Initialisation de la photodiode sur la broche ADC0 (GP26)
+photodiode_pin = 26
+photodiode = ADC(Pin(photodiode_pin))
+
+# Nom du fichier pour sauvegarder le seuil
+SEUIL_FILE = "seuil_lumiere.txt"
+
+# Fonction pour charger le seuil depuis le fichier
+def charger_seuil():
+    try:
+        with open(SEUIL_FILE, "r") as f:
+            return int(f.read())
+    except (OSError, ValueError):
+        return 30000  # Valeur par défaut si le fichier n'existe pas ou est corrompu
+
+# Fonction pour sauvegarder le seuil dans le fichier
+def sauvegarder_seuil(valeur):
+    with open(SEUIL_FILE, "w") as f:
+        f.write(str(valeur))
+
+# Seuil de détection de la lumière (à ajuster selon la lumière ambiante)
+seuil_lumiere = charger_seuil()  # Charge la valeur sauvegardée ou la valeur par défaut
+
+# Variables pour la mesure du temps
+temps_debut = 0
+temps_fin = 0
+obturateur_ouvert = False
+vitesse_obturation = 0.0
+
+
+# sets up a handy function we can call to clear the screen
+def clear():
+    display.set_pen(BLACK)
+    led.set_rgb(0, 0, 0)
+    display.clear()
+    display.update()
+
+# Fonction pour rafraîchir l'écran
+def refresh_screen():
+    display.set_pen(BLACK)
+    display.clear()
+    # Réinitialiser les variables d'affichage pour forcer le redessin de toutes les informations
+    global prev_valeur_lumiere, prev_seuil_lumiere_display, prev_vitesse_obturation_display, prev_obturateur_ouvert_display, prev_vitesse_text
+    prev_valeur_lumiere = -1
+    prev_seuil_lumiere_display = -1
+    prev_vitesse_obturation_display = -1.0
+    prev_obturateur_ouvert_display = False
+    prev_vitesse_text = ""
+    display.update()
+
+# Fonction pour régler la valeur du seuil_lumiere
+def regler_seuil_lumiere():
+    global seuil_lumiere
+    display.set_pen(BLACK)
+    display.clear()
+    display.set_pen(WHITE)
+    display.text("Regler Seuil Lumiere", 10, 10)
+    display.text("A: +, B: -", 10, 70)
+    display.text("Presser X pour terminer", 10, 90)
+    display.update()
+
+    # Variables pour détecter les changements de bouton
+    last_button_a_state = button_a.value()
+    last_button_b_state = button_b.value()
+    last_button_x_state = button_x.value()
+
+    # Garder la valeur du seuil précédente pour ne redessiner que si nécessaire
+    prev_seuil_affichage = -1
+
+    while True:
+        current_button_a_state = button_a.value()
+        current_button_b_state = button_b.value()
+        current_button_x_state = button_x.value()
+        
+        # Détection des appuis de bouton (passage de HIGH à LOW)
+        if not current_button_a_state and last_button_a_state:  # Si le bouton A est pressé
+            seuil_lumiere += 100
+            if seuil_lumiere < 0:
+                seuil_lumiere = 0
+        if not current_button_b_state and last_button_b_state:  # Si le bouton B est pressé
+            seuil_lumiere -= 100
+        
+        # Si le seuil a changé, mettre à jour l'affichage
+        if seuil_lumiere != prev_seuil_affichage:
+            display.set_pen(BLACK)
+            display.rectangle(0, 30, 240, 30) # Efface la ligne du seuil précédent
+            display.set_pen(WHITE)
+            display.text(f"Seuil: {seuil_lumiere}", 10, 30, 65535)
+            display.update()
+            prev_seuil_affichage = seuil_lumiere
+
+        if not current_button_x_state and last_button_x_state: # Quitter le mode réglage avec le bouton X
+            sauvegarder_seuil(seuil_lumiere)
+            break
+        
+        last_button_a_state = current_button_a_state
+        last_button_b_state = current_button_b_state
+        last_button_x_state = current_button_x_state
+        
+        time.sleep(0.01) # Petite pause pour éviter la surcharge CPU et l'anti-rebond
+
+# Fonction pour régler le rétroéclairage
+def regler_retro_eclairage():
+    global current_backlight
+    display.set_pen(BLACK)
+    display.clear()
+    display.set_pen(WHITE)
+    display.text("Regler Retro Eclairage", 10, 10)
+    display.text("A: +, B: -", 10, 70)
+    display.text("Presser X pour terminer", 10, 90)
+    display.update()
+
+    # Variables pour détecter les changements de bouton
+    last_button_a_state = button_a.value()
+    last_button_b_state = button_b.value()
+    last_button_x_state = button_x.value()
+
+    # Garder la valeur du rétroéclairage précédente pour ne redessiner que si nécessaire
+    prev_backlight_affichage = -1.0
+
+    while True:
+        current_button_a_state = button_a.value()
+        current_button_b_state = button_b.value()
+        current_button_x_state = button_x.value()
+
+        if not current_button_a_state and last_button_a_state:  # Si le bouton A est pressé (augmenter)
+            current_backlight += 0.05
+            if current_backlight > 1.0:
+                current_backlight = 1.0
+            display.set_backlight(current_backlight)
+        
+        if not current_button_b_state and last_button_b_state:  # Si le bouton B est pressé (diminuer)
+            current_backlight -= 0.05
+            if current_backlight < 0.0:
+                current_backlight = 0.0
+            display.set_backlight(current_backlight)
+        
+        # Si le rétroéclairage a changé, mettre à jour l'affichage
+        if abs(current_backlight - prev_backlight_affichage) > 0.01: # Comparaison avec une tolérance
+            display.set_pen(BLACK)
+            display.rectangle(0, 30, 240, 30) # Efface la ligne du rétroéclairage précédent
+            display.set_pen(WHITE)
+            display.text(f"Retro: {current_backlight:.2f}", 10, 30, 65535)
+            display.update()
+            prev_backlight_affichage = current_backlight
+
+        if not current_button_x_state and last_button_x_state: # Quitter le mode réglage avec le bouton X
+            sauvegarder_retro_eclairage(current_backlight)
+            break
+        
+        last_button_a_state = current_button_a_state
+        last_button_b_state = current_button_b_state
+        last_button_x_state = current_button_x_state
+        
+        time.sleep(0.01) # Petite pause pour éviter la surcharge CPU et l'anti-rebond
+
+
+# set up
+clear()
+
+# Variables pour stocker les valeurs précédentes et détecter les changements d'affichage
+prev_valeur_lumiere = -1
+prev_seuil_lumiere_display = -1
+prev_vitesse_obturation_display = -1.0
+prev_obturateur_ouvert_display = False
+prev_vitesse_text = ""
+
+def home_page():
+    display.set_pen(BLACK)
+    display.clear()
+    display.set_pen(WHITE)
+    display.set_font("bitmap8")
+    display.text("Mesure vitesse obturation", 10, 20, 240, 3)
+    display.text("Presser un bouton", 30, 90, 240, 2)
+    display.text("pour commencer", 40, 105, 240, 2)
+    display.update()
+
+    # Attendre qu'un bouton soit pressé
+    while True:
+        if not button_a.value() or not button_b.value() or not button_x.value() or not button_y.value():
+            time.sleep(0.2) # Anti-rebond
+            #Refresh screen before change screen
+            global current_backlight
+            display.set_pen(BLACK)
+            display.clear()
+            display.set_pen(WHITE)
+            break
+        time.sleep(0.01)
+
+def main_program_loop():
+    global prev_valeur_lumiere, prev_seuil_lumiere_display, prev_vitesse_obturation_display, prev_obturateur_ouvert_display, prev_vitesse_text, temps_debut, temps_fin, obturateur_ouvert, vitesse_obturation, seuil_lumiere, current_backlight
+    
+    # Réinitialiser les variables pour le début de la boucle principale
+    prev_valeur_lumiere = -1
+    prev_seuil_lumiere_display = -1
+    prev_vitesse_obturation_display = -1.0
+    prev_obturateur_ouvert_display = False
+    prev_vitesse_text = ""
+    temps_debut = 0
+    temps_fin = 0
+    obturateur_ouvert = False
+    vitesse_obturation = 0.0
+
+    while True:
+        # Vérifier si le bouton Y est pressé pour entrer en mode réglage du seuil de lumière
+        # Meilleure gestion de l'anti-rebond des boutons
+        if not button_y.value() and button_y.irq(handler=None, trigger=Pin.IRQ_FALLING):
+            regler_seuil_lumiere()
+            clear() # Effacer l'écran après le réglage
+            # Réinitialiser l'IRR du bouton Y après utilisation pour éviter des déclenchements multiples
+            button_y.irq(trigger=Pin.IRQ_FALLING, handler=lambda p: None)
+            time.sleep(0.1) # Courte pause pour laisser le temps au bouton de se relâcher
+
+        # Vérifier si le bouton B est pressé pour entrer en mode réglage du rétroéclairage
+        if not button_b.value() and button_b.irq(handler=None, trigger=Pin.IRQ_FALLING):
+            regler_retro_eclairage()
+            clear() # Effacer l'écran après le réglage
+            # Réinitialiser l'IRR du bouton B
+            button_b.irq(trigger=Pin.IRQ_FALLING, handler=lambda p: None)
+            time.sleep(0.1) # Courte pause
+
+        # Nouvelle logique pour le rafraîchissement de l'écran avec le bouton X
+        if not button_x.value() and button_x.irq(handler=None, trigger=Pin.IRQ_FALLING):
+            refresh_screen()
+            # Réinitialiser l'IRR du bouton X
+            button_x.irq(trigger=Pin.IRQ_FALLING, handler=lambda p: None)
+            time.sleep(0.1) # Courte pause
+
+        # Lecture de la valeur de la photodiode
+        valeur_lumiere = photodiode.read_u16()
+
+        # Logique de l'obturateur
+        if valeur_lumiere > seuil_lumiere and not obturateur_ouvert:
+            temps_debut = time.ticks_us()
+            obturateur_ouvert = True
+        elif valeur_lumiere < seuil_lumiere and obturateur_ouvert:
+            temps_fin = time.ticks_us()
+            obturateur_ouvert = False
+            duree = time.ticks_diff(temps_fin, temps_debut)
+            vitesse_obturation = duree / 1000000.0  # Conversion en secondes
+
+        # Optimisation de l'affichage
+        display_updated = False # Flag pour savoir si l'écran a été mis à jour
+
+        # Mettre à jour l'affichage uniquement si les valeurs ont changé
+        if valeur_lumiere != prev_valeur_lumiere:
+            display.set_pen(BLACK)
+            display.rectangle(0, 30, 240, 10) # Efface l'ancienne valeur de lumière
+            display.set_pen(GREEN)
+            display.text(f"Lumiere: {valeur_lumiere}", 10, 30)
+            display_updated = True
+            prev_valeur_lumiere = valeur_lumiere
+
+        if seuil_lumiere != prev_seuil_lumiere_display:
+            display.set_pen(BLACK)
+            display.rectangle(0, 50, 240, 10) # Efface l'ancien seuil
+            display.set_pen(WHITE)
+            display.text(f"Seuil: {seuil_lumiere}", 10, 50)
+            display_updated = True
+            prev_seuil_lumiere_display = seuil_lumiere
+
+        current_vitesse_text = ""
+        if vitesse_obturation > 0:
+            current_vitesse_text = f"Vitesse: {vitesse_obturation:.4f} s"
+        else:
+            current_vitesse_text = "Attente..."
+        
+        if current_vitesse_text != prev_vitesse_text:
+            display.set_pen(BLACK)
+            display.rectangle(0, 70, 240, 10) # Efface l'ancienne vitesse
+            display.set_pen(MAGENTA)
+            display.text(current_vitesse_text, 10, 70)
+            display_updated = True
+            prev_vitesse_text = current_vitesse_text
+
+        # Affichage des textes statiques (à dessiner une seule fois ou si l'écran est effacé)
+        # Ou seulement si l'écran a été complètement effacé
+        if display_updated or True: # Force l'affichage initial des textes statiques
+            display.set_pen(YELLOW)
+            display.text("Mesure Obturateur", 10, 10)
+            led.set_rgb(5, 5, 5) # La LED n'a pas besoin de clignoter, juste être allumée
+            display.set_pen(WHITE)
+            display.text("Y: Seuil B: Retro X", 10, 90)
+            display.text("X: Rafraichir", 10, 110) # Ajout de l'indication pour la touche X
+        
+        if display_updated:
+            display.update()
+
+        time.sleep(0.01) # Une pause plus longue pour réduire la fréquence des mises à jour
+
+# Exécution du programme
+home_page()
+main_program_loop()
