@@ -1,6 +1,6 @@
 # Camera-shutter-measuring-device
 This device is dedicated to verifying the proper functioning of the shutters of film cameras.
-This MicroPython program is designed for the **Raspberry Pi Pico** (specifically using the Pimoroni Pico Display) to function as a **Digital Shutter Speed Tester**. It allows photographers and camera collectors to verify the accuracy of analog camera shutters using a photodiode.
+This MicroPython program is designed for the **Raspberry Pi Pico** (specifically using the Pimoroni Pico Display) to function as a **Digital Shutter Speed Tester**. It allows photographers and camera collectors to verify the accuracy of analog camera shutters using a photoresistor.
 
 Hardware need
  Raspebry Pico, 
