@@ -65,4 +65,4 @@ If the screen is too bright or too dim:
 * **Screen seems frozen:** Press **X** on the main screen to force a manual refresh of the display buffer.
 * **Values not saving:** Ensure your Pico has enough free space for the small `.txt` configuration files.
 
-Would you like me to explain how to convert the decimal results (like 0.008s) into standard photographic fractions (like 1/125)?
+Would you like me to explain how to convert the decimal results (like 0.008s) into standard photographic fractions (like 1/125)
